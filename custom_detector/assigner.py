@@ -13,8 +13,8 @@ def _batch_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
     Returns:
         iou: [N, M] IoU matrix
     """
-    area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])  # [N]
-    area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])  # [M]
+    area1 = (boxes1[:, 2] - boxes1[:, 0]).clamp(min=0) * (boxes1[:, 3] - boxes1[:, 1]).clamp(min=0)  # [N]
+    area2 = (boxes2[:, 2] - boxes2[:, 0]).clamp(min=0) * (boxes2[:, 3] - boxes2[:, 1]).clamp(min=0)  # [M]
 
     inter_x1 = torch.max(boxes1[:, None, 0], boxes2[None, :, 0])  # [N, M]
     inter_y1 = torch.max(boxes1[:, None, 1], boxes2[None, :, 1])

@@ -34,7 +34,7 @@ class CSPBlock(nn.Module):
     """Cross-Stage Partial block — splits channels, processes one half, merges.
 
     This is the core building block used at every fusion point in the neck.
-    Inspired by YOLOv8's C2f block.
+    Inspired by YOLOv5's C3 block.
 
     Args:
         channels: input and output channel count (must be even)

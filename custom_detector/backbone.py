@@ -21,7 +21,7 @@ class GRN(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x is (B, C, H, W)
-        gx = torch.norm(x, p=2, dim=(2, 3), keepdim=True)
+        gx = torch.linalg.vector_norm(x, ord=2, dim=(2, 3), keepdim=True)
         nx = gx / (gx.mean(dim=1, keepdim=True) + self.eps)
         return self.gamma * (x * nx) + self.beta + x
 

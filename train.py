@@ -652,8 +652,8 @@ def main(num_epochs=NUM_EPOCHS, resume='', limit_train_batches=None, limit_val_b
                 max_batches=limit_train_batches, ema=ema, scaler=scaler, scheduler=scheduler
             )
 
-            # Smart validation schedule: every 10 epochs early, every val_every later
-            effective_val_every = max(val_every * 2, 10) if epoch < 100 else val_every
+            # Smart validation schedule: validate less frequently early on
+            effective_val_every = max(val_every * 2, 10) if epoch < num_epochs // 2 else val_every
             should_validate = (not skip_val) and ((epoch + 1) % effective_val_every == 0 or epoch == num_epochs - 1)
             if should_validate:
                 try:

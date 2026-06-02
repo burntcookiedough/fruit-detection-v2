@@ -112,12 +112,12 @@ class SPPF(nn.Module):
         self.cv1 = nn.Sequential(
             nn.Conv2d(in_channels, c_, 1, 1, bias=False),
             nn.BatchNorm2d(c_),
-            nn.SiLU()
+            nn.SiLU(inplace=True)
         )
         self.cv2 = nn.Sequential(
             nn.Conv2d(c_ * 4, out_channels, 1, 1, bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.SiLU()
+            nn.SiLU(inplace=True)
         )
         self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
 
@@ -135,17 +135,16 @@ class CEM(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         c_hidden = max(1, in_channels // 4)
         self.fc = nn.Sequential(
-            nn.Linear(in_channels, c_hidden, bias=False),
+            nn.Conv2d(in_channels, c_hidden, 1, bias=False),
             nn.ReLU(inplace=True),
-            nn.Linear(c_hidden, in_channels, bias=False),
+            nn.Conv2d(c_hidden, in_channels, 1, bias=False),
             nn.Sigmoid()
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y.expand_as(x)
+        y = self.avg_pool(x)
+        y = self.fc(y)
+        return x * y
 
 
 class FruitDetectorV2(nn.Module):
@@ -212,7 +211,7 @@ class FruitDetectorV2(nn.Module):
         if self.use_cem:
             self.cem = nn.ModuleList([CEM(neck_channels) for _ in range(3)])
         else:
-            self.cem = nn.ModuleList([nn.Identity() for _ in range(3)])
+            self.cem = None
 
         # Detection heads: one per scale, shared architecture
         self.heads = nn.ModuleList([
@@ -256,8 +255,6 @@ class FruitDetectorV2(nn.Module):
         # Apply CEM
         if self.use_cem:
             fused = [cem(f) for cem, f in zip(self.cem, fused)]
-        else:
-            fused = [f for f in fused]
 
         # Heads → per-scale predictions
         cls_list = []

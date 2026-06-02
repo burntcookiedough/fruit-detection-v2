@@ -4,7 +4,7 @@ from custom_detector.model import FruitDetectorV2
 from config import (NUM_CLASSES, IMG_SIZE, BACKBONE_NAME, 
                     NECK_CHANNELS, REG_MAX, STRIDES)
 
-def export_onnx(weights_path, output_path, img_size=512):
+def export_onnx(weights_path, output_path, img_size=IMG_SIZE):
     print(f"Loading weights from {weights_path}...")
     ckpt = torch.load(weights_path, map_location='cpu', weights_only=False)
     
@@ -58,7 +58,7 @@ def export_onnx(weights_path, output_path, img_size=512):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, required=True)
-    parser.add_argument('--out', type=str, default='fruit_detector_v3.onnx')
-    parser.add_argument('--size', type=int, default=512)
+    parser.add_argument('--out', type=str, default='fruit_detector_v2.onnx')
+    parser.add_argument('--size', type=int, default=IMG_SIZE)
     args = parser.parse_args()
     export_onnx(args.weights, args.out, args.size)

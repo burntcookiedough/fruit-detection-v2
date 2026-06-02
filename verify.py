@@ -116,7 +116,11 @@ for fname in val_images:
     else:
         for i in range(len(boxes)):
             cls_name = CLASS_NAMES[labels[i].item()] if labels[i].item() < len(CLASS_NAMES) else f"cls_{labels[i].item()}"
-            b = boxes[i]
+            b = boxes[i].clone()
+            b[0] = b[0] * orig_w / IMG_SIZE
+            b[1] = b[1] * orig_h / IMG_SIZE
+            b[2] = b[2] * orig_w / IMG_SIZE
+            b[3] = b[3] * orig_h / IMG_SIZE
             print(f"  [{cls_name:>12}] conf={scores[i]:.4f}  box=[{b[0]:.1f}, {b[1]:.1f}, {b[2]:.1f}, {b[3]:.1f}]")
 
 print("\n" + "=" * 70)

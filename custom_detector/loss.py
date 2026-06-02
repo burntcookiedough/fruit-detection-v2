@@ -68,6 +68,16 @@ def ciou_loss(pred_xyxy: torch.Tensor, target_xyxy: torch.Tensor) -> torch.Tenso
     pred_xyxy = pred_xyxy.float()
     target_xyxy = target_xyxy.float()
 
+    # Width and height of predicted and target boxes
+    pred_w = (pred_xyxy[:, 2] - pred_xyxy[:, 0]).clamp(min=0)
+    pred_h = (pred_xyxy[:, 3] - pred_xyxy[:, 1]).clamp(min=0)
+    tgt_w = (target_xyxy[:, 2] - target_xyxy[:, 0]).clamp(min=0)
+    tgt_h = (target_xyxy[:, 3] - target_xyxy[:, 1]).clamp(min=0)
+
+    # Areas
+    pred_area = pred_w * pred_h
+    target_area = tgt_w * tgt_h
+
     # Intersection
     inter_x1 = torch.max(pred_xyxy[:, 0], target_xyxy[:, 0])
     inter_y1 = torch.max(pred_xyxy[:, 1], target_xyxy[:, 1])
@@ -75,9 +85,6 @@ def ciou_loss(pred_xyxy: torch.Tensor, target_xyxy: torch.Tensor) -> torch.Tenso
     inter_y2 = torch.min(pred_xyxy[:, 3], target_xyxy[:, 3])
     inter = (inter_x2 - inter_x1).clamp(min=0) * (inter_y2 - inter_y1).clamp(min=0)
 
-    # Areas
-    pred_area = (pred_xyxy[:, 2] - pred_xyxy[:, 0]) * (pred_xyxy[:, 3] - pred_xyxy[:, 1])
-    target_area = (target_xyxy[:, 2] - target_xyxy[:, 0]) * (target_xyxy[:, 3] - target_xyxy[:, 1])
     union = pred_area + target_area - inter + 1e-7
     iou = inter / union
 
@@ -86,7 +93,7 @@ def ciou_loss(pred_xyxy: torch.Tensor, target_xyxy: torch.Tensor) -> torch.Tenso
     enc_y1 = torch.min(pred_xyxy[:, 1], target_xyxy[:, 1])
     enc_x2 = torch.max(pred_xyxy[:, 2], target_xyxy[:, 2])
     enc_y2 = torch.max(pred_xyxy[:, 3], target_xyxy[:, 3])
-    enc_diag_sq = (enc_x2 - enc_x1) ** 2 + (enc_y2 - enc_y1) ** 2 + 1e-7
+    enc_diag_sq = (enc_x2 - enc_x1).clamp(min=0) ** 2 + (enc_y2 - enc_y1).clamp(min=0) ** 2 + 1e-7
 
     # Center distance
     pred_cx = (pred_xyxy[:, 0] + pred_xyxy[:, 2]) / 2
@@ -96,11 +103,11 @@ def ciou_loss(pred_xyxy: torch.Tensor, target_xyxy: torch.Tensor) -> torch.Tenso
     center_dist_sq = (pred_cx - tgt_cx) ** 2 + (pred_cy - tgt_cy) ** 2
 
     # Aspect ratio penalty
-    pred_w = (pred_xyxy[:, 2] - pred_xyxy[:, 0]).clamp(min=1e-6)
-    pred_h = (pred_xyxy[:, 3] - pred_xyxy[:, 1]).clamp(min=1e-6)
-    tgt_w = (target_xyxy[:, 2] - target_xyxy[:, 0]).clamp(min=1e-6)
-    tgt_h = (target_xyxy[:, 3] - target_xyxy[:, 1]).clamp(min=1e-6)
-    v = (4.0 / (math.pi ** 2)) * (torch.atan(tgt_w / tgt_h) - torch.atan(pred_w / pred_h)) ** 2
+    pred_w_clamp = pred_w.clamp(min=1e-6)
+    pred_h_clamp = pred_h.clamp(min=1e-6)
+    tgt_w_clamp = tgt_w.clamp(min=1e-6)
+    tgt_h_clamp = tgt_h.clamp(min=1e-6)
+    v = (4.0 / (math.pi ** 2)) * (torch.atan(tgt_w_clamp / tgt_h_clamp) - torch.atan(pred_w_clamp / pred_h_clamp)) ** 2
     with torch.no_grad():
         alpha = v / (1 - iou + v + 1e-7)
 

@@ -54,6 +54,6 @@ def decode_predictions_v2(cls_pred, box_pred_ltrb, anchor_points, stride_tensor,
     y2 = pts[:, 1] + ltrb[:, 3] * st[:, 0]
     boxes_xyxy = torch.stack([x1, y1, x2, y2], dim=1).clamp(min=0, max=img_size)
 
-    nms_keep = ops.nms(boxes_xyxy, max_scores, iou_threshold=nms_iou)
+    nms_keep = ops.batched_nms(boxes_xyxy, max_scores, labels, iou_threshold=nms_iou)
     nms_keep = nms_keep[:max_detections]
     return boxes_xyxy[nms_keep], labels[nms_keep], max_scores[nms_keep]

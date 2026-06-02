@@ -53,6 +53,9 @@ class FruitDataset(Dataset):
                 'labels': np.array(labels, dtype=np.int64) if labels else np.zeros((0,), dtype=np.int64),
             })
 
+        # Pre-calculate minority indices for fast copy-paste (Pineapple=4, Watermelon=5)
+        self.minority_indices = [i for i, entry in enumerate(self._labels) if 4 in entry['labels'] or 5 in entry['labels']]
+
     def __len__(self):
         return len(self.img_files)
 
@@ -76,8 +79,8 @@ class FruitDataset(Dataset):
     def _get_labels(self, idx):
         """Get pre-loaded labels for image at idx, scaled to pixel coordinates."""
         entry = self._labels[idx]
-        boxes = torch.tensor(entry['boxes'], dtype=torch.float32)
-        labels = torch.tensor(entry['labels'], dtype=torch.long)
+        boxes = torch.from_numpy(entry['boxes']).clone()
+        labels = torch.from_numpy(entry['labels']).clone()
         if boxes.numel() > 0:
             boxes[:, 0] *= self.img_size  # cx
             boxes[:, 1] *= self.img_size  # cy
@@ -133,10 +136,9 @@ class FruitDataset(Dataset):
     def _copy_paste(self, img, boxes, labels):
         """Copy-Paste augmentation: copies random objects from another image into this one."""
         # Class-aware sampling: Prioritize minority classes (Pineapple=4, Watermelon=5)
-        minority_indices = [i for i, entry in enumerate(self._labels) if 4 in entry['labels'] or 5 in entry['labels']]
         is_minority_choice = False
-        if minority_indices and random.random() < 0.7:
-            idx2 = random.choice(minority_indices)
+        if self.minority_indices and random.random() < 0.7:
+            idx2 = random.choice(self.minority_indices)
             is_minority_choice = True
         else:
             idx2 = random.randint(0, len(self) - 1)
@@ -245,11 +247,11 @@ class FruitDataset(Dataset):
                     all_boxes.append([new_cx, new_cy, new_w, new_h])
                     all_labels.append(labels_list_i[bi])
 
-        # Mosaic Minimum Area Filtering (drop slivers < 16x16 px)
+        # Mosaic Minimum Area Filtering (drop slivers < 8x8 px)
         final_boxes, final_labels = [], []
         for b, c in zip(all_boxes, all_labels):
             area = b[2] * b[3]
-            if area > 256:  # Minimum 16x16 area
+            if area >= 64:  # Minimum 8x8 area
                 final_boxes.append(b)
                 final_labels.append(c)
 
@@ -293,6 +295,8 @@ class FruitDataset(Dataset):
                 img = TF.adjust_saturation(img, random.uniform(0.5, 1.5))
             if random.random() < 0.3:
                 img = TF.adjust_brightness(img, random.uniform(0.7, 1.3))
+                
+            img = img.clamp(0.0, 1.0)
 
             # Contrast
             if random.random() < 0.3:
