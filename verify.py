@@ -59,7 +59,7 @@ for fname in val_images:
     img_path = os.path.join(VAL_IMG_DIR, fname)
     img = Image.open(img_path).convert('RGB')
     orig_w, orig_h = img.size
-    img_resized = img.resize((IMG_SIZE, IMG_SIZE), Image.BILINEAR)
+    img_resized = img.resize((IMG_SIZE, IMG_SIZE), Image.Resampling.BILINEAR)
     tensor = TF.to_tensor(img_resized).unsqueeze(0).to(device)
 
     with torch.no_grad(), torch.amp.autocast(device_type=device.type):
