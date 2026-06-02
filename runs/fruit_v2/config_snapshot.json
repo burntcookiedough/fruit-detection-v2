@@ -1,0 +1,46 @@
+{
+  "version": "v2",
+  "backbone": "convnext_femto.d1_in1k",
+  "neck_channels": 96,
+  "reg_max": 8,
+  "strides": [
+    8,
+    16,
+    32
+  ],
+  "img_size": 352,
+  "num_classes": 8,
+  "class_names": [
+    "apple",
+    "banana",
+    "orange",
+    "mango",
+    "pineapple",
+    "watermelon",
+    "grapes",
+    "pomegranate"
+  ],
+  "batch_size": 48,
+  "freeze_backbone_epochs": 2,
+  "lr_backbone": 0.001,
+  "lr_head": 0.005,
+  "weight_decay": 0.005,
+  "cls_weight": 1.0,
+  "box_weight": 2.5,
+  "dfl_weight": 0.5,
+  "command_args": {
+    "epochs": 40,
+    "resume": "",
+    "limit_train_batches": null,
+    "limit_val_batches": null,
+    "val_every": 5,
+    "skip_val": false,
+    "workers": 8,
+    "prefetch_factor": 4,
+    "persistent_workers": true,
+    "cache_images": true,
+    "build_cache": false,
+    "freeze_backbone_epochs": 2,
+    "batch_size": 48
+  }
+}
