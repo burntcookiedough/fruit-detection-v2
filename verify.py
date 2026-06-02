@@ -1,5 +1,7 @@
 """Quick verification: load best_map50.pt and run inference on 5 validation images."""
-import os, sys, torch
+import os
+import sys
+import torch
 from PIL import Image
 import torchvision.transforms.functional as TF
 
@@ -12,35 +14,34 @@ from custom_detector.inference import decode_predictions_v2
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+ckpt_path = os.path.join(WEIGHTS_DIR, 'best_map50.pt')
+ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+
+if 'ema_state_dict' in ckpt:
+    ema_sd = ckpt['ema_state_dict']
+    sd_to_load = ema_sd.get('model', ema_sd.get('shadow', ema_sd))
+    if not isinstance(sd_to_load, dict): 
+        sd_to_load = ckpt['model_state_dict']
+else:
+    sd_to_load = ckpt['model_state_dict']
+
+use_sppf = any('sppf' in k for k in sd_to_load.keys())
+use_cem = any('cem' in k for k in sd_to_load.keys())
+use_grn = any('.grn.gamma' in k for k in sd_to_load.keys())
+
 # Load model
 model = FruitDetectorV2(
     num_classes=NUM_CLASSES, img_size=IMG_SIZE,
     backbone_name=BACKBONE_NAME, pretrained=False,
     neck_channels=NECK_CHANNELS, reg_max=REG_MAX, strides=STRIDES,
-    num_head_convs=1
+    num_head_convs=1,
+    use_sppf=use_sppf,
+    use_cem=use_cem,
+    use_grn=use_grn
 ).to(device)
 
-ckpt_path = os.path.join(WEIGHTS_DIR, 'best_map50.pt')
-ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-
-# Try EMA weights first, fall back to model weights
-if 'ema_state_dict' in ckpt:
-    ema_sd = ckpt['ema_state_dict']
-    # EMA state dict may have 'ema_model.' prefix or 'shadow' key
-    if 'shadow' in ema_sd:
-        model.load_state_dict(ema_sd['shadow'])
-        print("Loaded EMA shadow weights.")
-    else:
-        # Try direct load
-        try:
-            model.load_state_dict(ema_sd)
-            print("Loaded EMA weights directly.")
-        except RuntimeError:
-            model.load_state_dict(ckpt['model_state_dict'])
-            print("EMA format mismatch, loaded regular model weights.")
-else:
-    model.load_state_dict(ckpt['model_state_dict'])
-    print("Loaded model weights (no EMA found).")
+model.load_state_dict(sd_to_load, strict=True)
+print("Loaded model weights.")
 
 model.eval()
 print(f"Checkpoint epoch: {ckpt.get('epoch', '?')}")
@@ -61,9 +62,47 @@ for fname in val_images:
     img_resized = img.resize((IMG_SIZE, IMG_SIZE), Image.BILINEAR)
     tensor = TF.to_tensor(img_resized).unsqueeze(0).to(device)
 
-    with torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast(device_type=device.type):
+        # Base prediction
         cls_pred, box_ltrb, box_raw, anchor_points, stride_tensor = model(tensor)
-
+        
+        # Flip prediction
+        tensor_flipped = torch.flip(tensor, dims=[3])
+        cls_pred_f, box_ltrb_f, _, _, _ = model(tensor_flipped)
+        
+        # TTA merging: Reverse spatial layout of flipped predictions
+        cls_f_unflipped = []
+        box_f_unflipped = []
+        start = 0
+        for stride in STRIDES:
+            fm_size = IMG_SIZE // stride
+            num_pts = fm_size * fm_size
+            
+            # Unflip classification map
+            c_chunk = cls_pred_f[:, start:start+num_pts, :]
+            c_chunk = c_chunk.view(1, fm_size, fm_size, -1)
+            c_chunk = torch.flip(c_chunk, dims=[2])
+            cls_f_unflipped.append(c_chunk.view(1, num_pts, -1))
+            
+            # Unflip box map
+            b_chunk = box_ltrb_f[:, start:start+num_pts, :]
+            b_chunk = b_chunk.view(1, fm_size, fm_size, 4)
+            b_chunk = torch.flip(b_chunk, dims=[2])
+            box_f_unflipped.append(b_chunk.view(1, num_pts, 4))
+            
+            start += num_pts
+            
+        cls_pred_f = torch.cat(cls_f_unflipped, dim=1)
+        box_ltrb_f = torch.cat(box_f_unflipped, dim=1)
+        
+        # Swap left and right distances in box_ltrb_f
+        # box_ltrb_f is [..., 4] representing [left, top, right, bottom]
+        # Swapping index 0 (left) and 2 (right) maps it back to original image
+        box_ltrb_f = box_ltrb_f[..., [2, 1, 0, 3]]
+        
+        # Average base and flipped predictions
+        cls_pred = (cls_pred + cls_pred_f) / 2.0
+        box_ltrb = (box_ltrb + box_ltrb_f) / 2.0
     boxes, labels, scores = decode_predictions_v2(
         cls_pred[0], box_ltrb[0], anchor_points, stride_tensor,
         conf_thresh=CONF_THRESH, nms_iou=NMS_IOU,

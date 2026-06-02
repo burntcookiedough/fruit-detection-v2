@@ -132,14 +132,30 @@ class FruitDataset(Dataset):
 
     def _copy_paste(self, img, boxes, labels):
         """Copy-Paste augmentation: copies random objects from another image into this one."""
-        idx2 = random.randint(0, len(self) - 1)
+        # Class-aware sampling: Prioritize minority classes (Pineapple=4, Watermelon=5)
+        minority_indices = [i for i, entry in enumerate(self._labels) if 4 in entry['labels'] or 5 in entry['labels']]
+        is_minority_choice = False
+        if minority_indices and random.random() < 0.7:
+            idx2 = random.choice(minority_indices)
+            is_minority_choice = True
+        else:
+            idx2 = random.randint(0, len(self) - 1)
+            
         boxes2, labels2 = self._get_labels(idx2)
         if boxes2.numel() == 0:
             return img, boxes, labels
 
         img2 = self.load_image(self.img_files[idx2])
         num_objs = min(len(boxes2), random.randint(1, 3))
-        indices = torch.randperm(len(boxes2))[:num_objs]
+        
+        if is_minority_choice:
+            minority_obj_indices = [i for i, lbl in enumerate(labels2.tolist()) if lbl in (4, 5)]
+            other_indices = [i for i in range(len(boxes2)) if i not in minority_obj_indices]
+            random.shuffle(minority_obj_indices)
+            random.shuffle(other_indices)
+            indices = (minority_obj_indices + other_indices)[:num_objs]
+        else:
+            indices = torch.randperm(len(boxes2))[:num_objs].tolist()
 
         new_boxes = boxes.tolist() if boxes.numel() > 0 else []
         new_labels = labels.tolist() if labels.numel() > 0 else []
@@ -229,8 +245,16 @@ class FruitDataset(Dataset):
                     all_boxes.append([new_cx, new_cy, new_w, new_h])
                     all_labels.append(labels_list_i[bi])
 
-        boxes = torch.tensor(all_boxes, dtype=torch.float32) if all_boxes else torch.zeros((0, 4), dtype=torch.float32)
-        labels = torch.tensor(all_labels, dtype=torch.long) if all_labels else torch.zeros((0,), dtype=torch.long)
+        # Mosaic Minimum Area Filtering (drop slivers < 16x16 px)
+        final_boxes, final_labels = [], []
+        for b, c in zip(all_boxes, all_labels):
+            area = b[2] * b[3]
+            if area > 256:  # Minimum 16x16 area
+                final_boxes.append(b)
+                final_labels.append(c)
+
+        boxes = torch.tensor(final_boxes, dtype=torch.float32) if final_boxes else torch.zeros((0, 4), dtype=torch.float32)
+        labels = torch.tensor(final_labels, dtype=torch.long) if final_labels else torch.zeros((0,), dtype=torch.long)
         return mosaic_img, boxes, labels
 
     def __getitem__(self, idx):

@@ -1,0 +1,300 @@
+# SOTA Surgical Edits for Fruit Detection V3
+# Following python-pro standards (Type hints, docstrings, modern PyTorch idioms)
+
+================================================================================
+FILE 1: custom_detector/loss.py
+GOAL: Implement Focal Loss to replace standard BCE for severe class imbalance.
+================================================================================
+
+[FIND in `DetectionLossV2.__init__`]:
+self.bce = nn.BCEWithLogitsLoss(reduction='none')
+
+[REPLACE WITH]:
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for dense object detection to mitigate class imbalance.
+    """
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, reduction: str = 'none'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.bce = nn.BCEWithLogitsLoss(reduction=reduction)
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce_loss = self.bce(inputs, targets)
+        pt = torch.exp(-bce_loss)  # pt is the probability of the target
+        focal_weight = self.alpha * (1 - pt) ** self.gamma
+        return focal_weight * bce_loss
+
+[FIND in `DetectionLossV2.__init__` again]:
+self.bce = nn.BCEWithLogitsLoss(reduction='none')
+
+[REPLACE WITH]:
+self.bce = FocalLoss(alpha=0.25, gamma=2.0, reduction='none')
+
+
+================================================================================
+FILE 2: custom_detector/backbone.py
+GOAL: Inject Global Response Normalization (GRN) into the ConvNeXt block to 
+      upgrade it to ConvNeXt V2 standards and prevent feature collapse.
+================================================================================
+
+[FIND in `Block.__init__`]:
+self.pwconv2 = nn.Linear(4 * dim, dim)
+
+[REPLACE WITH]:
+# Add GRN layer between the two pointwise convolutions
+self.grn = GRN(4 * dim)
+self.pwconv2 = nn.Linear(4 * dim, dim)
+
+[ADD class GRN above `Block` definition]:
+class GRN(nn.Module):
+    """Global Response Normalization from ConvNeXt V2."""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.zeros(1, 1, 1, dim))
+        self.beta = nn.Parameter(torch.zeros(1, 1, 1, dim))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is (B, H, W, C)
+        gx = torch.norm(x, p=2, dim=(1, 2), keepdim=True)
+        nx = gx / (gx.mean(dim=-1, keepdim=True) + self.eps)
+        return self.gamma * (x * nx) + self.beta + x
+
+[FIND in `Block.forward`]:
+x = self.act(x)
+x = self.pwconv2(x)
+
+[REPLACE WITH]:
+x = self.act(x)
+x = self.grn(x)
+x = self.pwconv2(x)
+
+
+================================================================================
+FILE 3: custom_detector/model.py
+GOAL: Add Spatial Pyramid Pooling Fast (SPPF) and Context Enhancement Modules (CEM)
+================================================================================
+
+[ADD classes SPPF and CEM above `FruitDetectorV2`]:
+class SPPF(nn.Module):
+    """Spatial Pyramid Pooling - Fast (SPPF) layer for YOLO architectures."""
+    def __init__(self, in_channels: int, out_channels: int, k: int = 5):
+        super().__init__()
+        c_ = in_channels // 2  # hidden channels
+        self.cv1 = nn.Sequential(
+            nn.Conv2d(in_channels, c_, 1, 1, bias=False),
+            nn.BatchNorm2d(c_),
+            nn.SiLU()
+        )
+        self.cv2 = nn.Sequential(
+            nn.Conv2d(c_ * 4, out_channels, 1, 1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.SiLU()
+        )
+        self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.cv1(x)
+        y1 = self.m(x)
+        y2 = self.m(y1)
+        return self.cv2(torch.cat((x, y1, y2, self.m(y2)), 1))
+
+class CEM(nn.Module):
+    """Context Enhancement Module to boost small object representation."""
+    def __init__(self, in_channels: int):
+        super().__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(in_channels, in_channels // 4, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_channels // 4, in_channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y.expand_as(x)
+
+[FIND in `FruitDetectorV2.__init__`]:
+# FPN / PANet neck
+self.neck = PANet(in_channels=[96, 192, 384], out_channels=neck_channels)
+self.head = DecoupledHead(num_classes=num_classes, in_channels=neck_channels)
+
+[REPLACE WITH]:
+self.sppf = SPPF(384, 384, k=5)
+self.neck = PANet(in_channels=[96, 192, 384], out_channels=neck_channels)
+self.cem = nn.ModuleList([CEM(neck_channels) for _ in range(3)])
+self.head = DecoupledHead(num_classes=num_classes, in_channels=neck_channels)
+
+[FIND in `FruitDetectorV2.forward`]:
+c3, c4, c5 = self.backbone(x)
+features = self.neck([c3, c4, c5])
+return self.head(features)
+
+[REPLACE WITH]:
+c3, c4, c5 = self.backbone(x)
+c5 = self.sppf(c5)
+features = self.neck([c3, c4, c5])
+features = [cem(f) for cem, f in zip(self.cem, features)]
+return self.head(features)
+
+
+================================================================================
+FILE 4: train.py
+GOAL: Implement Gradient Accumulation & Dynamic Multi-Scale Training
+================================================================================
+
+[FIND near top of `train_one_epoch`]:
+for i, (images, targets) in enumerate(pbar):
+    images = images.to(device, non_blocking=True)
+
+[REPLACE WITH]:
+import random
+# Dynamic Multi-Scale logic
+scales = [352, 384, 416, 448, 480, 512]
+ACCUMULATION_STEPS = 3
+
+for i, (images, targets) in enumerate(pbar):
+    if i % 10 == 0:  # Change scale every 10 batches
+        target_sz = random.choice(scales)
+        images = torch.nn.functional.interpolate(images, size=(target_sz, target_sz), mode='bilinear', align_corners=False)
+        
+    images = images.to(device, non_blocking=True)
+
+[FIND in `train_one_epoch`]:
+optimizer.zero_grad()
+scaler.scale(loss).backward()
+scaler.unscale_(optimizer)
+
+[REPLACE WITH]:
+# Gradient Accumulation
+loss_scaled = loss / ACCUMULATION_STEPS
+scaler.scale(loss_scaled).backward()
+
+if (i + 1) % ACCUMULATION_STEPS == 0 or (i + 1) == max_batches:
+    scaler.unscale_(optimizer)
+
+[FIND in `train_one_epoch` (just below the above)]:
+torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
+scaler.step(optimizer)
+scaler.update()
+
+[REPLACE WITH]:
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
+    scaler.step(optimizer)
+    scaler.update()
+    optimizer.zero_grad()
+
+
+================================================================================
+FILE 5: custom_detector/dataset.py
+GOAL: Implement Class-Aware Copy-Paste and Mosaic Area Filtering
+================================================================================
+
+[FIND in `_copy_paste`]:
+def _copy_paste(self, img, boxes, classes):
+    if len(self.boxes) == 0: return img, boxes, classes
+    idx = random.randint(0, len(self.boxes) - 1)
+
+[REPLACE WITH]:
+def _copy_paste(self, img, boxes, classes):
+    if len(self.boxes) == 0: return img, boxes, classes
+    # Class-aware sampling: Prioritize minority classes (Pineapple=4, Watermelon=5)
+    minority_indices = [i for i, c in enumerate(self.classes) if 4 in c or 5 in c]
+    if minority_indices and random.random() < 0.7:
+        idx = random.choice(minority_indices)
+    else:
+        idx = random.randint(0, len(self.boxes) - 1)
+
+[FIND in `_mosaic` (at the very end of the function)]:
+if len(valid_boxes) > 0:
+    boxes = np.stack(valid_boxes)
+    classes = np.array(valid_classes)
+else:
+    boxes = np.zeros((0, 4), dtype=np.float32)
+
+[REPLACE WITH]:
+# Mosaic Minimum Area Filtering (drop slivers < 16x16 px)
+final_boxes, final_classes = [], []
+for b, c in zip(valid_boxes, valid_classes):
+    area = (b[2] - b[0]) * (b[3] - b[1])
+    if area > 256:  # Minimum 16x16 area
+        final_boxes.append(b)
+        final_classes.append(c)
+
+if len(final_boxes) > 0:
+    boxes = np.stack(final_boxes)
+    classes = np.array(final_classes)
+else:
+    boxes = np.zeros((0, 4), dtype=np.float32)
+
+
+================================================================================
+FILE 6: verify.py
+GOAL: Implement simple Test-Time Augmentation (TTA) via horizontal flip
+================================================================================
+
+[FIND in `verify.py` inside inference loop]:
+with torch.amp.autocast('cuda'):
+    preds = model(img_tensor)
+
+[REPLACE WITH]:
+with torch.amp.autocast('cuda'):
+    # Base prediction
+    preds_base = model(img_tensor)
+    
+    # Flip prediction
+    img_flipped = torch.flip(img_tensor, dims=[3])
+    preds_flipped = model(img_flipped)
+    
+    preds = preds_base  # Placeholder for complex TTA merging
+
+
+================================================================================
+FILE 7: export.py (NEW FILE)
+GOAL: Production ML-Engineer standard. Export the trained PyTorch model to ONNX 
+      for high-speed, scalable deployment (e.g., TensorRT, ONNX Runtime).
+================================================================================
+
+[CREATE `export.py`]:
+import torch
+import argparse
+from custom_detector.model import FruitDetectorV2
+from config import NUM_CLASSES
+
+def export_onnx(weights_path, output_path, img_size=512):
+    print(f"Loading weights from {weights_path}...")
+    ckpt = torch.load(weights_path, map_location='cpu', weights_only=False)
+    
+    model = FruitDetectorV2(num_classes=NUM_CLASSES)
+    model.load_state_dict(ckpt['model_state_dict'])
+    model.eval()
+
+    dummy_input = torch.randn(1, 3, img_size, img_size)
+    
+    print(f"Exporting to {output_path}...")
+    torch.onnx.export(
+        model, 
+        dummy_input, 
+        output_path, 
+        export_params=True, 
+        opset_version=17, 
+        do_constant_folding=True,
+        input_names=['input'], 
+        output_names=['output'],
+        dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+    )
+    print("Export successful!")
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--weights', type=str, required=True)
+    parser.add_argument('--out', type=str, default='fruit_detector_v3.onnx')
+    parser.add_argument('--size', type=int, default=512)
+    args = parser.parse_args()
+    export_onnx(args.weights, args.out, args.size)
+

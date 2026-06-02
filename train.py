@@ -106,10 +106,27 @@ def train_one_epoch(model, loader, criterion, optimizer, device, grad_clip,
     use_amp = scaler is not None
     loader_len = len(loader)
 
+    # Dynamic Multi-Scale logic
+    scales = [352, 384, 416, 448, 480, 512]
+    ACCUMULATION_STEPS = 3
+    target_sz = None
+
     for batch_idx, batch in enumerate(loader):
         if max_batches is not None and batch_idx >= max_batches:
             break
         images, boxes_list, labels_list, _ = unpack_batch(batch)
+
+        if target_sz is None:
+            target_sz = images.shape[-1]
+
+        if batch_idx % 10 == 0:  # Change scale every 10 batches
+            target_sz = random.choice(scales)
+
+        if target_sz != images.shape[-1]:
+            scale_ratio = target_sz / images.shape[-1]
+            images = torch.nn.functional.interpolate(images, size=(target_sz, target_sz), mode='bilinear', align_corners=False)
+            boxes_list = [b * scale_ratio for b in boxes_list]
+
         images = images.to(device, non_blocking=True)
         if device.type == 'cuda':
             images = images.contiguous(memory_format=torch.channels_last)
@@ -124,23 +141,31 @@ def train_one_epoch(model, loader, criterion, optimizer, device, grad_clip,
                                   boxes_list, labels_list)
             loss = loss_dict['total']
 
-        optimizer.zero_grad(set_to_none=True)
+        # Gradient Accumulation
+        loss_scaled = loss / ACCUMULATION_STEPS
+        
         if use_amp:
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            clip_grad_norm_(model.parameters(), grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
+            scaler.scale(loss_scaled).backward()
+            if (batch_idx + 1) % ACCUMULATION_STEPS == 0 or (batch_idx + 1) == loader_len or (max_batches and batch_idx + 1 == max_batches):
+                scaler.unscale_(optimizer)
+                clip_grad_norm_(model.parameters(), grad_clip)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                if ema is not None:
+                    ema.update(model)
+                if scheduler is not None:
+                    scheduler.step()
         else:
-            loss.backward()
-            clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
-
-        if ema is not None:
-            ema.update(model)
-
-        if scheduler is not None:
-            scheduler.step()
+            loss_scaled.backward()
+            if (batch_idx + 1) % ACCUMULATION_STEPS == 0 or (batch_idx + 1) == loader_len or (max_batches and batch_idx + 1 == max_batches):
+                clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                if ema is not None:
+                    ema.update(model)
+                if scheduler is not None:
+                    scheduler.step()
 
         total_loss += loss.item()
         total_cls += loss_dict['cls'].item()
@@ -327,27 +352,32 @@ def save_checkpoint(path, epoch, model, optimizer, scheduler, best_map, best_los
 
 def load_checkpoint(path, device, model, optimizer, scheduler, ema=None, scaler=None):
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt['model_state_dict'])
-    optimizer.load_state_dict(ckpt['optimizer_state_dict'])
     try:
-        scheduler.load_state_dict(ckpt['scheduler_state_dict'])
-    except (KeyError, ValueError):
-        print("Warning: scheduler state mismatch; scheduler was reset.")
-    if ema is not None and 'ema_state_dict' in ckpt:
-        ema.load_state_dict(ckpt['ema_state_dict'])
-    if scaler is not None and 'scaler_state_dict' in ckpt:
-        scaler.load_state_dict(ckpt['scaler_state_dict'])
-    if 'rng_torch' in ckpt:
-        torch.set_rng_state(ckpt['rng_torch'].cpu())
-    if 'rng_numpy' in ckpt:
-        np.random.set_state(ckpt['rng_numpy'])
-    if 'rng_cuda' in ckpt and torch.cuda.is_available():
-        torch.cuda.set_rng_state(ckpt['rng_cuda'].cpu())
-    start_epoch = ckpt['epoch'] + 1
-    best_map = ckpt.get('best_map50', 0.0)
-    best_loss = ckpt.get('best_loss', float('inf'))
-    no_improve_count = ckpt.get('no_improve_count', 0)
-    return start_epoch, best_map, best_loss, no_improve_count
+        model.load_state_dict(ckpt['model_state_dict'])
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        try:
+            scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+        except (KeyError, ValueError):
+            print("Warning: scheduler state mismatch; scheduler was reset.")
+        if ema is not None and 'ema_state_dict' in ckpt:
+            ema.load_state_dict(ckpt['ema_state_dict'])
+        if scaler is not None and 'scaler_state_dict' in ckpt:
+            scaler.load_state_dict(ckpt['scaler_state_dict'])
+        if 'rng_torch' in ckpt:
+            torch.set_rng_state(ckpt['rng_torch'].cpu())
+        if 'rng_numpy' in ckpt:
+            np.random.set_state(ckpt['rng_numpy'])
+        if 'rng_cuda' in ckpt and torch.cuda.is_available():
+            torch.cuda.set_rng_state(ckpt['rng_cuda'].cpu())
+        start_epoch = ckpt['epoch'] + 1
+        best_map = ckpt.get('best_map50', 0.0)
+        best_loss = ckpt.get('best_loss', float('inf'))
+        no_improve_count = ckpt.get('no_improve_count', 0)
+        return start_epoch, best_map, best_loss, no_improve_count
+    except RuntimeError as e:
+        print(f"Architecture mismatch detected. Transfer learning via strict=False and resetting training state.")
+        model.load_state_dict(ckpt['model_state_dict'], strict=False)
+        return 0, 0.0, float('inf'), 0
 
 
 def find_latest_checkpoint():
@@ -486,8 +516,14 @@ def main(num_epochs=NUM_EPOCHS, resume='', limit_train_batches=None, limit_val_b
     workers = resolve_workers(train_ds, workers, pin_memory, prefetch_factor, persistent_workers)
     print(f"DataLoader workers: {workers}")
     train_sampler = RandomSampler(train_ds, num_samples=len(train_ds) // 3)
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=train_sampler,
-                              num_workers=NUM_WORKERS, pin_memory=True, collate_fn=collate_fn)
+    train_kwargs = {
+        "batch_size": batch_size, "sampler": train_sampler, "num_workers": workers,
+        "collate_fn": collate_fn, "pin_memory": pin_memory,
+    }
+    if workers > 0:
+        train_kwargs["prefetch_factor"] = prefetch_factor
+        train_kwargs["persistent_workers"] = persistent_workers
+    train_loader = DataLoader(train_ds, **train_kwargs)
     val_loader = make_loader(val_ds, batch_size, False, workers, pin_memory, prefetch_factor, persistent_workers)
     mosaic_disabled = False
 
@@ -530,10 +566,11 @@ def main(num_epochs=NUM_EPOCHS, resume='', limit_train_batches=None, limit_val_b
     scaler = torch.GradScaler('cuda') if device.type == 'cuda' else None
 
     # --- Scheduler ---
+    steps_per_epoch = math.ceil(len(train_loader) / 3)  # ACCUMULATION_STEPS = 3
     scheduler = OneCycleLR(
         optimizer,
         max_lr=[LR_BACKBONE, LR_BACKBONE, LR_HEAD, LR_HEAD],
-        steps_per_epoch=len(train_loader),
+        steps_per_epoch=steps_per_epoch,
         epochs=num_epochs,
         pct_start=0.1
     )
@@ -598,10 +635,14 @@ def main(num_epochs=NUM_EPOCHS, resume='', limit_train_batches=None, limit_val_b
                 train_ds.set_augmentation_probs(mosaic_prob=0.0)
                 # Recreate loader with sampler to preserve epoch step count and prevent worker dataset copies from keeping mosaic
                 train_sampler = RandomSampler(train_ds, num_samples=len(train_ds) // 3)
-                train_loader = DataLoader(
-                    train_ds, batch_size=batch_size, sampler=train_sampler,
-                    num_workers=workers, pin_memory=pin_memory, collate_fn=collate_fn
-                )
+                train_kwargs = {
+                    "batch_size": batch_size, "sampler": train_sampler, "num_workers": workers,
+                    "collate_fn": collate_fn, "pin_memory": pin_memory,
+                }
+                if workers > 0:
+                    train_kwargs["prefetch_factor"] = prefetch_factor
+                    train_kwargs["persistent_workers"] = persistent_workers
+                train_loader = DataLoader(train_ds, **train_kwargs)
                 mosaic_disabled = True
                 print(f"[Epoch {epoch+1}] Mosaic disabled for final fine-tuning.")
 

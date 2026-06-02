@@ -2,9 +2,9 @@
 import os
 from collections import Counter
 
-names = ["apple", "banana", "orange", "mango", "pineapple", "watermelon", "grapes", "pomegranate"]
-base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dataset_v4_balanced")
-
+from config import DATA_DIR, CLASS_NAMES
+import sys
+base = DATA_DIR
 for split in ["train", "valid", "test"]:
     lbl_dir = os.path.join(base, split, "labels")
     if not os.path.isdir(lbl_dir):
@@ -26,7 +26,7 @@ for split in ["train", "valid", "test"]:
     print(f"\n=== {split} ({n_files} images, {n_boxes} boxes) ===")
     for i in range(8):
         cnt = c.get(i, 0)
-        print(f"  {i} {names[i]:>12s}: {cnt:>6d} ({100*cnt/max(total,1):5.1f}%)")
+        print(f"  {i} {CLASS_NAMES[i]:>12s}: {cnt:>6d} ({100*cnt/max(total,1):5.1f}%)")
     if c:
         mx = max(c.values())
         mn = min(c.values())

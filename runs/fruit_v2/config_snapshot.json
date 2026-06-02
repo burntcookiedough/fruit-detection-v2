@@ -20,7 +20,7 @@
     "grapes",
     "pomegranate"
   ],
-  "batch_size": 48,
+  "batch_size": 2,
   "freeze_backbone_epochs": 2,
   "lr_backbone": 0.001,
   "lr_head": 0.005,
@@ -29,7 +29,7 @@
   "box_weight": 2.5,
   "dfl_weight": 0.5,
   "command_args": {
-    "epochs": 40,
+    "epochs": 1,
     "resume": "",
     "limit_train_batches": null,
     "limit_val_batches": null,
@@ -38,9 +38,9 @@
     "workers": 8,
     "prefetch_factor": 4,
     "persistent_workers": true,
-    "cache_images": true,
+    "cache_images": false,
     "build_cache": false,
     "freeze_backbone_epochs": 2,
-    "batch_size": 48
+    "batch_size": 2
   }
 }

@@ -4,6 +4,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import List, Dict, Optional, Tuple
 
 from .assigner import TaskAlignedAssigner
 from .anchor_points import decode_boxes
@@ -146,6 +147,31 @@ def dfl_loss(pred_dist: torch.Tensor, target_ltrb: torch.Tensor, reg_max: int) -
     return loss.mean()
 
 
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for dense object detection to mitigate class imbalance.
+    Works correctly with soft targets (e.g., from Task-Aligned Assignment).
+    """
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, reduction: str = 'none'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.bce = nn.BCEWithLogitsLoss(reduction=reduction)
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce_loss = self.bce(inputs, targets)
+        prob = torch.sigmoid(inputs)
+        
+        # focal weight for soft targets: |target - prob|^gamma
+        focal_weight = torch.abs(targets - prob) ** self.gamma
+        
+        if self.alpha >= 0:
+            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+            focal_weight = alpha_t * focal_weight
+            
+        return focal_weight * bce_loss
+
+
 class DetectionLossV2(nn.Module):
     """Detection loss with Task-Aligned Assignment + CIoU + DFL.
 
@@ -169,7 +195,7 @@ class DetectionLossV2(nn.Module):
         box_weight: float = 2.5,
         dfl_weight: float = 0.5,
         tal_topk: int = 10,
-        class_weights: torch.Tensor = None,
+        class_weights: Optional[torch.Tensor] = None,
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -178,6 +204,7 @@ class DetectionLossV2(nn.Module):
         self.box_weight = box_weight
         self.dfl_weight = dfl_weight
         self.assigner = TaskAlignedAssigner(topk=tal_topk)
+        self.bce = FocalLoss(alpha=0.25, gamma=2.0, reduction='none')
         if class_weights is not None:
             self.register_buffer('class_weights', class_weights)
         else:
@@ -190,9 +217,9 @@ class DetectionLossV2(nn.Module):
         box_pred_raw: torch.Tensor,
         anchor_points: torch.Tensor,
         stride_tensor: torch.Tensor,
-        gt_boxes_list: list,
-        gt_labels_list: list,
-    ) -> dict:
+        gt_boxes_list: List[torch.Tensor],
+        gt_labels_list: List[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
         """Compute detection loss.
 
         Args:
@@ -238,10 +265,10 @@ class DetectionLossV2(nn.Module):
 
         num_pos = fg_mask.sum().item()
 
-        # --- Classification loss (BCE with soft targets from TAL) ---
+        # --- Classification loss (Focal Loss with soft targets from TAL) ---
         cls_targets = target_scores  # [B, N, C] soft targets
-        cls_loss = F.binary_cross_entropy_with_logits(
-            cls_pred, cls_targets, reduction='none'
+        cls_loss = self.bce(
+            cls_pred, cls_targets
         )  # [B, N, C]
 
         # Apply per-class weights if provided

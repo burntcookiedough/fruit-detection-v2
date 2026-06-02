@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import List, Tuple, Optional
 
 from .backbone import ConvNeXtBackbone
 from .neck import PANet, Conv
@@ -103,6 +104,50 @@ class DecoupledHead(nn.Module):
         return cls, reg
 
 
+class SPPF(nn.Module):
+    """Spatial Pyramid Pooling - Fast (SPPF) layer for YOLO architectures."""
+    def __init__(self, in_channels: int, out_channels: int, k: int = 5):
+        super().__init__()
+        c_ = in_channels // 2  # hidden channels
+        self.cv1 = nn.Sequential(
+            nn.Conv2d(in_channels, c_, 1, 1, bias=False),
+            nn.BatchNorm2d(c_),
+            nn.SiLU()
+        )
+        self.cv2 = nn.Sequential(
+            nn.Conv2d(c_ * 4, out_channels, 1, 1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.SiLU()
+        )
+        self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.cv1(x)
+        y1 = self.m(x)
+        y2 = self.m(y1)
+        return self.cv2(torch.cat((x, y1, y2, self.m(y2)), 1))
+
+
+class CEM(nn.Module):
+    """Context Enhancement Module to boost small object representation."""
+    def __init__(self, in_channels: int):
+        super().__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        c_hidden = max(1, in_channels // 4)
+        self.fc = nn.Sequential(
+            nn.Linear(in_channels, c_hidden, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(c_hidden, in_channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y.expand_as(x)
+
+
 class FruitDetectorV2(nn.Module):
     """Anchor-free fruit detector with ConvNeXt backbone + PANet neck + decoupled head.
 
@@ -129,27 +174,45 @@ class FruitDetectorV2(nn.Module):
         pretrained: bool = True,
         neck_channels: int = 128,
         reg_max: int = 16,
-        strides: list = None,
+        strides: Optional[List[int]] = None,
         num_head_convs: int = 1,
+        use_sppf: bool = True,
+        use_cem: bool = True,
+        use_grn: bool = True,
     ):
         super().__init__()
         self.num_classes = num_classes
         self.img_size = img_size
         self.reg_max = reg_max
         self.strides = strides or [8, 16, 32]
+        self.use_sppf = use_sppf
+        self.use_cem = use_cem
 
         # Backbone: ConvNeXt-Femto → 3 feature maps at strides [8, 16, 32]
         self.backbone = ConvNeXtBackbone(
             model_name=backbone_name,
             pretrained=pretrained,
             out_indices=(1, 2, 3),
+            use_grn=use_grn,
         )
+
+        # SPPF on the highest-level feature map
+        if self.use_sppf:
+            self.sppf = SPPF(self.backbone.out_channels[-1], self.backbone.out_channels[-1], k=5)
+        else:
+            self.sppf = nn.Identity()
 
         # Neck: PANet bidirectional feature fusion
         self.neck = PANet(
             in_channels=self.backbone.out_channels,
             out_channels=neck_channels,
         )
+
+        # CEM: Context Enhancement Modules after neck
+        if self.use_cem:
+            self.cem = nn.ModuleList([CEM(neck_channels) for _ in range(3)])
+        else:
+            self.cem = nn.ModuleList([nn.Identity() for _ in range(3)])
 
         # Detection heads: one per scale, shared architecture
         self.heads = nn.ModuleList([
@@ -182,9 +245,19 @@ class FruitDetectorV2(nn.Module):
         """
         # Backbone → multi-scale features
         features = self.backbone(x)  # [P3, P4, P5]
+        
+        # Apply SPPF to P5
+        features = list(features)
+        features[-1] = self.sppf(features[-1])
 
         # Neck → fused features
         fused = self.neck(features)  # [N3, N4, N5]
+        
+        # Apply CEM
+        if self.use_cem:
+            fused = [cem(f) for cem, f in zip(self.cem, fused)]
+        else:
+            fused = [f for f in fused]
 
         # Heads → per-scale predictions
         cls_list = []
@@ -201,18 +274,28 @@ class FruitDetectorV2(nn.Module):
         # Decode DFL distributions into LTRB distances
         box_pred_ltrb = self.dfl(box_pred_raw)  # [B, N, 4]
 
-        return cls_pred, box_pred_ltrb, box_pred_raw, self.anchor_points, self.stride_tensor
+        # Dynamically generate anchor points if image size changed (e.g. multi-scale training)
+        if cls_pred.shape[1] != self.anchor_points.shape[0]:
+            from .anchor_points import generate_anchor_points_and_strides
+            anchor_points, stride_tensor = generate_anchor_points_and_strides(x.shape[-1], self.strides)
+            anchor_points = anchor_points.to(x.device)
+            stride_tensor = stride_tensor.to(x.device)
+        else:
+            anchor_points = self.anchor_points
+            stride_tensor = self.stride_tensor
 
-    def freeze_backbone(self):
+        return cls_pred, box_pred_ltrb, box_pred_raw, anchor_points, stride_tensor
+
+    def freeze_backbone(self) -> None:
         """Freeze backbone weights (for transfer learning warmup)."""
         self.backbone.freeze_all()
 
-    def freeze_early_backbone(self):
+    def freeze_early_backbone(self) -> None:
         """Freeze stem and stage 0, 1 for extreme speedup."""
         for name, param in self.backbone.named_parameters():
             if 'stem' in name or 'stages.0' in name or 'stages.1' in name:
                 param.requires_grad = False
 
-    def unfreeze_backbone(self):
+    def unfreeze_backbone(self) -> None:
         """Unfreeze all backbone weights."""
         self.backbone.unfreeze_all()
