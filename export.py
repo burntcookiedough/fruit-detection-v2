@@ -16,6 +16,12 @@ def export_onnx(weights_path, output_path, img_size=IMG_SIZE):
     else:
         sd_to_load = ckpt['model_state_dict']
 
+    # Fix for CEM linear to conv2d conversion
+    for k in list(sd_to_load.keys()):
+        if 'cem.' in k and 'fc.' in k and 'weight' in k:
+            if sd_to_load[k].dim() == 2:
+                sd_to_load[k] = sd_to_load[k].unsqueeze(-1).unsqueeze(-1)
+
     use_sppf = any('sppf' in k for k in sd_to_load.keys())
     use_cem = any('cem' in k for k in sd_to_load.keys())
     use_grn = any('.grn.gamma' in k for k in sd_to_load.keys())
