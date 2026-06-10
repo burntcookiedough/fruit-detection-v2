@@ -1,43 +1,26 @@
-import torch
 import argparse
+import torch
+
 from custom_detector.model import FruitDetectorV2
-from config import (NUM_CLASSES, IMG_SIZE, BACKBONE_NAME, 
-                    NECK_CHANNELS, REG_MAX, STRIDES)
+from config import (NUM_CLASSES, IMG_SIZE, BACKBONE_NAME,
+                    NECK_CHANNELS, REG_MAX, STRIDES, DEFAULT_ONNX_OUTPUT,
+                    DEFAULT_WEIGHTS)
+from custom_detector.checkpoint import infer_model_options, load_detector_state_dict
 
 def export_onnx(weights_path, output_path, img_size=IMG_SIZE):
     print(f"Loading weights from {weights_path}...")
-    ckpt = torch.load(weights_path, map_location='cpu', weights_only=False)
-    
-    if 'ema_state_dict' in ckpt:
-        ema_sd = ckpt['ema_state_dict']
-        sd_to_load = ema_sd.get('model', ema_sd.get('shadow', ema_sd))
-        if not isinstance(sd_to_load, dict):
-            sd_to_load = ckpt['model_state_dict']
-    else:
-        sd_to_load = ckpt['model_state_dict']
-
-    # Fix for CEM linear to conv2d conversion
-    for k in list(sd_to_load.keys()):
-        if 'cem.' in k and 'fc.' in k and 'weight' in k:
-            if sd_to_load[k].dim() == 2:
-                sd_to_load[k] = sd_to_load[k].unsqueeze(-1).unsqueeze(-1)
-
-    use_sppf = any('sppf' in k for k in sd_to_load.keys())
-    use_cem = any('cem' in k for k in sd_to_load.keys())
-    use_grn = any('.grn.gamma' in k for k in sd_to_load.keys())
+    state_dict = load_detector_state_dict(weights_path, map_location='cpu')
+    model_options = infer_model_options(state_dict)
 
     model = FruitDetectorV2(
         num_classes=NUM_CLASSES, img_size=img_size,
         backbone_name=BACKBONE_NAME, pretrained=False,
         neck_channels=NECK_CHANNELS, reg_max=REG_MAX, strides=STRIDES,
         num_head_convs=1,
-        use_sppf=use_sppf,
-        use_cem=use_cem,
-        use_grn=use_grn
+        **model_options,
     )
 
-    model.load_state_dict(sd_to_load, strict=True)
-        
+    model.load_state_dict(state_dict, strict=True)
     model.eval()
 
     dummy_input = torch.randn(1, 3, img_size, img_size)
@@ -63,8 +46,8 @@ def export_onnx(weights_path, output_path, img_size=IMG_SIZE):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, required=True)
-    parser.add_argument('--out', type=str, default='fruit_detector_v2.onnx')
+    parser.add_argument('--weights', type=str, default=DEFAULT_WEIGHTS)
+    parser.add_argument('--out', type=str, default=DEFAULT_ONNX_OUTPUT)
     parser.add_argument('--size', type=int, default=IMG_SIZE)
     args = parser.parse_args()
     export_onnx(args.weights, args.out, args.size)

@@ -65,6 +65,10 @@ venv.bak/
 .idea/
 
 # Project specific
+.agents/
+cache/
+output/
+output_inference.png
 runs/
 custom_detector/weights/
 custom_detector/runs/
