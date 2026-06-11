@@ -89,7 +89,26 @@ def run_webcam(
     logger.info("Opening webcam (ID: %d)...", camera_id)
     cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
-        raise RuntimeError(f"Could not open webcam with ID {camera_id}.")
+        working_indices = []
+        for i in range(6):
+            if i == camera_id:
+                continue
+            probe = cv2.VideoCapture(i)
+            if probe.isOpened():
+                ret, frame = probe.read()
+                if ret:
+                    working_indices.append(i)
+                probe.release()
+        if working_indices:
+            raise RuntimeError(
+                f"Could not open webcam with ID {camera_id}. "
+                f"However, active camera index/indices found at: {working_indices}. "
+                f"Try running with: --cam {working_indices[0]}"
+            )
+        raise RuntimeError(
+            f"Could not open webcam with ID {camera_id}. No active cameras detected on the system."
+        )
+
 
     bgr_colors = [
         (48, 59, 255),
