@@ -1,0 +1,122 @@
+# ============================================================
+# Fruit Detector v2 — Docker Compose orchestration
+# ============================================================
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up train          # Train
+#   docker compose -f docker/docker-compose.yml run infer          # Inference
+#   docker compose -f docker/docker-compose.yml run export         # ONNX export
+#   docker compose -f docker/docker-compose.yml --profile dev up   # Dev mode
+#
+# Requires NVIDIA Container Toolkit for GPU support.
+# ============================================================
+
+services:
+  # --- Training ---
+  train:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    volumes:
+      - ../dataset:/app/dataset:ro
+      - ../runs:/app/runs
+      - ../cache:/app/cache
+    env_file:
+      - ../.env
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: on-failure:3
+    command: ["train", "--epochs", "100"]
+
+  # --- Inference on a single image ---
+  infer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    volumes:
+      - ../dataset:/app/dataset:ro
+      - ../runs:/app/runs:ro
+      - ../output:/app/output
+    env_file:
+      - ../.env
+    command: >
+      infer
+        --image /app/dataset/test/images/sample.jpg
+        --weights /app/runs/fruit_v2/weights/best_map50.pt
+        --out /app/output/result.png
+
+  # --- ONNX export ---
+  export:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    volumes:
+      - ../runs:/app/runs:ro
+      - ../output:/app/output
+    env_file:
+      - ../.env
+    command: >
+      export
+        --weights /app/runs/fruit_v2/weights/best_map50.pt
+        --out /app/output/fruit_detector_v2.onnx
+
+  # --- Verification on validation set ---
+  verify:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    volumes:
+      - ../dataset:/app/dataset:ro
+      - ../runs:/app/runs:ro
+    env_file:
+      - ../.env
+    command: ["verify", "--weights", "/app/runs/fruit_v2/weights/best_map50.pt", "--limit", "10"]
+
+  # --- Dataset analysis ---
+  analyze:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    volumes:
+      - ../dataset:/app/dataset:ro
+    env_file:
+      - ../.env
+    command: ["analyze"]
+
+  # --- Development container ---
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: development
+    profiles: ["dev"]
+    volumes:
+      - ../src:/app/src
+      - ../tests:/app/tests
+      - ../dataset:/app/dataset:ro
+      - ../runs:/app/runs
+      - ../cache:/app/cache
+    env_file:
+      - ../.env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true
+    entrypoint: ["bash"]

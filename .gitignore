@@ -64,15 +64,21 @@ venv.bak/
 # PyCharm
 .idea/
 
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+
 # Project specific
 .agents/
 cache/
 output/
 output_inference.png
 runs/
-custom_detector/weights/
-custom_detector/runs/
+datasets/
+dataset/
+
+# Model weights and binaries (use GitHub Releases)
 *.pt
+*.pth
 *.onnx
 *.weights
-datasets/

@@ -1,0 +1,108 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fruit-detector"
+dynamic = ["version"]
+description = "Anchor-free fruit detection with ConvNeXt backbone and PANet neck"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Anshu" }]
+keywords = ["object-detection", "fruit", "convnext", "anchor-free", "deep-learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "timm>=0.9.0",
+    "Pillow>=9.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+]
+metrics = [
+    "torchmetrics>=1.0.0",
+]
+webcam = [
+    "opencv-python>=4.8.0",
+]
+
+[project.scripts]
+fruit-detect = "fruit_detector.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/anshu/fruit-detection-v2"
+Repository = "https://github.com/anshu/fruit-detection-v2"
+Issues = "https://github.com/anshu/fruit-detection-v2/issues"
+
+[tool.hatch.version]
+path = "src/fruit_detector/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fruit_detector"]
+
+# ---------------------------------------------------------------------------
+# Ruff — linting + formatting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "RUF"]
+ignore = [
+    "E501",    # line length handled by formatter
+    "UP007",   # X | Y union syntax — keep Optional for torch compat
+    "N806",    # uppercase variable names (B, N, C, H, W) — standard PyTorch convention
+    "N812",    # import F — standard PyTorch alias for torch.nn.functional
+    "B905",    # zip() without strict= — not needed for model parameter zips
+    "RUF002",  # ambiguous Unicode in docstrings (× multiplication sign)
+    "RUF003",  # ambiguous Unicode in comments (× multiplication sign)
+    "SIM102",  # nested if — sometimes clearer for multi-condition + nested body
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fruit_detector"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------------------
+# mypy — gradual type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["tests/"]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
