@@ -64,6 +64,7 @@ from ..model import FruitDetectorV2, ModelEMA
 from ..ops import DetectionLossV2
 from ..ops.inference import decode_predictions_v2
 from ..ops.loss import compute_class_weights_from_label_entries
+from ..utils.checkpoint import _normalize_cem_weights
 
 logger = logging.getLogger(__name__)
 
@@ -381,7 +382,8 @@ def _truncate_history_to_epoch(path: str, last_epoch: int) -> None:
 
 
 def _config_snapshot(args: Any) -> dict:
-    arg_values = vars(args) if args is not None else {}
+    raw_args = vars(args) if args is not None else {}
+    arg_values = {k: v for k, v in raw_args.items() if not callable(v)}
     return {
         "version": "v2",
         "backbone": BACKBONE_NAME,
@@ -452,6 +454,15 @@ def load_checkpoint(
 ) -> tuple[int, float, float, int]:
     """Load a checkpoint and restore full training state."""
     ckpt = torch.load(path, map_location=device, weights_only=False)
+    if "model_state_dict" in ckpt:
+        _normalize_cem_weights(ckpt["model_state_dict"])
+    if "ema_state_dict" in ckpt:
+        ema_state = ckpt["ema_state_dict"]
+        if isinstance(ema_state, dict):
+            ema_model_dict = ema_state.get("model", ema_state)
+            if isinstance(ema_model_dict, dict):
+                _normalize_cem_weights(ema_model_dict)
+
     try:
         model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
@@ -758,6 +769,9 @@ def run_training(
     # Resume
     if not resume:
         resume = _find_latest_checkpoint()
+    if resume.lower() in {"none", "false", "null", "fresh"}:
+        resume = ""
+
     if resume and os.path.isfile(resume):
         start_epoch, best_map, best_loss, no_improve_count = load_checkpoint(
             resume,
