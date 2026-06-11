@@ -64,7 +64,7 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "from fruit_detector.model import FruitDetectorV2; print('ok')" || exit 1
 
 # Metadata
-LABEL maintainer="Anshu" \
+LABEL maintainer="Anshul" \
       description="Anchor-free fruit detection with ConvNeXt + PANet + DFL" \
       version="2.0"
 
