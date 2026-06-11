@@ -1,4 +1,4 @@
-# 🍎 Fruit Detector v2
+# Fruit Detector v2
 
 > Anchor-free object detection for real-time fruit identification, powered by ConvNeXt + PANet + DFL.
 
