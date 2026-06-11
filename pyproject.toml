@@ -9,7 +9,7 @@ description = "Anchor-free fruit detection with ConvNeXt backbone and PANet neck
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-authors = [{ name = "Anshu" }]
+authors = [{ name = "Anshul" }]
 keywords = ["object-detection", "fruit", "convnext", "anchor-free", "deep-learning"]
 classifiers = [
     "Development Status :: 4 - Beta",
