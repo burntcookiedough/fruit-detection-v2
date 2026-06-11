@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Fruit Detector v2 — Runner script (Windows).
+    Fruit Detector v2 - Runner script (Windows).
 .DESCRIPTION
     Loads .env, dispatches on FRUIT_RUN_MODE or CLI args,
     auto-detects installed package vs source fallback.
@@ -14,13 +14,13 @@
     .\scripts\run.ps1 --help
 .NOTES
     Environment Variables:
-      FRUIT_RUN_MODE  — auto-dispatch mode (train|image|infer|webcam|verify|export|analyze)
-      PYTHON_BIN      — Python interpreter (default: python)
+      FRUIT_RUN_MODE  - auto-dispatch mode (train|image|infer|webcam|verify|export|analyze)
+      PYTHON_BIN      - Python interpreter (default: python)
     Exit Codes:
-      0  — success
-      1  — general error
-      2  — Python not found
-      3  — unknown FRUIT_RUN_MODE
+      0  - success
+      1  - general error
+      2  - Python not found
+      3  - unknown FRUIT_RUN_MODE
 #>
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -29,7 +29,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# ── Constants ────────────────────────────────────────────────
+# == Constants ================================================
 $RootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $RootDir
 
@@ -43,19 +43,19 @@ $ValidModes = @{
     "analyze" = @("analyze")
 }
 
-# ── Logging ──────────────────────────────────────────────────
+# == Logging ==================================================
 function Write-Info  { param([string]$Message) Write-Host "[run.ps1] $Message" -ForegroundColor Cyan }
 function Write-Warn  { param([string]$Message) Write-Host "[run.ps1] $Message" -ForegroundColor Yellow }
 function Write-Err   { param([string]$Message) Write-Host "[run.ps1] $Message" -ForegroundColor Red }
 
-# ── Load .env ────────────────────────────────────────────────
+# == Load .env ================================================
 function Import-DotEnv {
     $envFile = Join-Path $RootDir ".env"
     if (-not (Test-Path $envFile)) { return }
 
     Get-Content $envFile | ForEach-Object {
         $line = $_.Trim()
-        if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
+        if ($line -and (-not $line.StartsWith("#")) -and $line.Contains("=")) {
             $parts = $line -split "=", 2
             $key = $parts[0].Trim()
             $val = $parts[1].Trim().Trim('"').Trim("'")
@@ -67,7 +67,7 @@ function Import-DotEnv {
     }
 }
 
-# ── Validate Python ──────────────────────────────────────────
+# == Validate Python ==========================================
 function Get-PythonBinary {
     $pythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python" }
 
@@ -81,7 +81,7 @@ function Get-PythonBinary {
     return $pythonBin
 }
 
-# ── Resolve FRUIT_RUN_MODE → CLI args ────────────────────────
+# == Resolve FRUIT_RUN_MODE -> CLI args =======================
 function Resolve-ModeToArgs {
     param([string]$Mode)
 
@@ -94,7 +94,7 @@ function Resolve-ModeToArgs {
     exit 3
 }
 
-# ── Execute via installed package or source fallback ─────────
+# == Execute via installed package or source fallback =========
 function Invoke-FruitDetect {
     param([string]$PythonBin, [string[]]$CliArgs)
 
@@ -114,12 +114,12 @@ function Invoke-FruitDetect {
     exit $LASTEXITCODE
 }
 
-# ── Main ─────────────────────────────────────────────────────
+# == Main =====================================================
 Import-DotEnv
 $pythonBin = Get-PythonBinary
 
 # Auto-dispatch on FRUIT_RUN_MODE when no args given
-if (-not $Arguments -or $Arguments.Count -eq 0) {
+if (($null -eq $Arguments) -or ($Arguments.Count -eq 0)) {
     $mode = $env:FRUIT_RUN_MODE
     if ($mode) {
         $Arguments = Resolve-ModeToArgs -Mode $mode

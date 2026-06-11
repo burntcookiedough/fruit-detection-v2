@@ -239,6 +239,10 @@ fruit-detect train --epochs 50 --batch-size 16
 # Resume from a checkpoint
 fruit-detect train --resume runs/fruit_v2/weights/last.pt
 
+# Start a fresh training run (disable auto-resume)
+fruit-detect train --resume none
+
+
 # Build image cache first, then train with caching
 fruit-detect train --build-cache --cache-images --epochs 100
 
@@ -260,7 +264,7 @@ fruit-detect train --workers 4 --prefetch-factor 2 --no-persistent-workers
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--epochs` | int | 40 | Number of training epochs |
-| `--resume` | str | — | Path to checkpoint to resume from |
+| `--resume` | str | — | Path to checkpoint to resume from. Pass 'none' or 'fresh' to start a new training run from scratch. |
 | `--limit-train-batches` | int | — | Limit training batches per epoch |
 | `--limit-val-batches` | int | — | Limit validation batches |
 | `--val-every` | int | 5 | Run validation every N epochs |
