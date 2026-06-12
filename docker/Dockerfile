@@ -47,7 +47,7 @@ RUN groupadd -g 1001 fruitapp && \
     useradd -u 1001 -g fruitapp -m -s /bin/bash fruitapp
 
 # Copy source and install the package
-COPY --chown=fruitapp:fruitapp pyproject.toml README.md .
+COPY --chown=fruitapp:fruitapp pyproject.toml README.md ./
 COPY --chown=fruitapp:fruitapp src/ src/
 RUN pip install --no-cache-dir . && \
     pip cache purge 2>/dev/null || true
@@ -79,7 +79,7 @@ FROM deps AS development
 WORKDIR /app
 
 # Install dev dependencies
-COPY pyproject.toml README.md .
+COPY pyproject.toml README.md ./
 COPY src/ src/
 RUN pip install --no-cache-dir -e ".[dev,metrics]"
 
