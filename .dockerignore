@@ -54,6 +54,7 @@ runs/
 # Documentation & non-build files
 docs/
 *.md
+!README.md
 LICENSE
 CONTRIBUTING.md
 .pre-commit-config.yaml

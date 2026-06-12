@@ -19,11 +19,15 @@ services:
       dockerfile: docker/Dockerfile
       target: production
     volumes:
-      - ../dataset:/app/dataset:ro
+      - ${FRUIT_DATA_DIR:-../dataset}:/app/dataset:ro
       - ../runs:/app/runs
       - ../cache:/app/cache
     env_file:
       - ../.env
+    environment:
+      - FRUIT_DATA_DIR=/app/dataset
+      - FRUIT_RUNS_DIR=/app/runs
+      - FRUIT_CACHE_DIR=/app/cache
     deploy:
       resources:
         limits:
@@ -43,11 +47,15 @@ services:
       dockerfile: docker/Dockerfile
       target: production
     volumes:
-      - ../dataset:/app/dataset:ro
+      - ${FRUIT_DATA_DIR:-../dataset}:/app/dataset:ro
       - ../runs:/app/runs:ro
       - ../output:/app/output
     env_file:
       - ../.env
+    environment:
+      - FRUIT_DATA_DIR=/app/dataset
+      - FRUIT_RUNS_DIR=/app/runs
+      - FRUIT_CACHE_DIR=/app/cache
     command: >
       infer
         --image /app/dataset/test/images/sample.jpg
@@ -65,6 +73,10 @@ services:
       - ../output:/app/output
     env_file:
       - ../.env
+    environment:
+      - FRUIT_DATA_DIR=/app/dataset
+      - FRUIT_RUNS_DIR=/app/runs
+      - FRUIT_CACHE_DIR=/app/cache
     command: >
       export
         --weights /app/runs/fruit_v2/weights/best_map50.pt
@@ -77,10 +89,14 @@ services:
       dockerfile: docker/Dockerfile
       target: production
     volumes:
-      - ../dataset:/app/dataset:ro
+      - ${FRUIT_DATA_DIR:-../dataset}:/app/dataset:ro
       - ../runs:/app/runs:ro
     env_file:
       - ../.env
+    environment:
+      - FRUIT_DATA_DIR=/app/dataset
+      - FRUIT_RUNS_DIR=/app/runs
+      - FRUIT_CACHE_DIR=/app/cache
     command: ["verify", "--weights", "/app/runs/fruit_v2/weights/best_map50.pt", "--limit", "10"]
 
   # --- Dataset analysis ---
@@ -90,9 +106,13 @@ services:
       dockerfile: docker/Dockerfile
       target: production
     volumes:
-      - ../dataset:/app/dataset:ro
+      - ${FRUIT_DATA_DIR:-../dataset}:/app/dataset:ro
     env_file:
       - ../.env
+    environment:
+      - FRUIT_DATA_DIR=/app/dataset
+      - FRUIT_RUNS_DIR=/app/runs
+      - FRUIT_CACHE_DIR=/app/cache
     command: ["analyze"]
 
   # --- Development container ---
@@ -105,11 +125,15 @@ services:
     volumes:
       - ../src:/app/src
       - ../tests:/app/tests
-      - ../dataset:/app/dataset:ro
+      - ${FRUIT_DATA_DIR:-../dataset}:/app/dataset:ro
       - ../runs:/app/runs
       - ../cache:/app/cache
     env_file:
       - ../.env
+    environment:
+      - FRUIT_DATA_DIR=/app/dataset
+      - FRUIT_RUNS_DIR=/app/runs
+      - FRUIT_CACHE_DIR=/app/cache
     deploy:
       resources:
         reservations:
